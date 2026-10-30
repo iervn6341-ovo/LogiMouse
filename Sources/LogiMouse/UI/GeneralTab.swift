@@ -33,6 +33,9 @@ struct GeneralTab: View {
                         }
                     ))
                     HelpText(L("Takes effect after you log out and back in."))
+                    Toggle(L("Show popup when the microphone is muted or unmuted"),
+                           isOn: $store.settings.general.micMutePopup)
+                    Toggle(L("Show popup when Caps Lock changes"), isOn: $store.settings.general.capsLockPopup)
                     Picker(L("Language"), selection: $store.settings.general.language) {
                         Text(L("System")).tag("system")
                         Text("English").tag("en")

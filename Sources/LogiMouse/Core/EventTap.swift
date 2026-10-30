@@ -14,11 +14,11 @@ final class EventTap {
     func start() {
         guard tap == nil else { return }
         let types: [CGEventType] = [
-            .leftMouseDown, .leftMouseUp,
+            .leftMouseDown, .leftMouseUp, .leftMouseDragged,
             .rightMouseDown, .rightMouseUp, .rightMouseDragged,
             .otherMouseDown, .otherMouseUp, .otherMouseDragged,
             .mouseMoved, .scrollWheel,
-            .keyDown, .keyUp,
+            .keyDown, .keyUp, .flagsChanged,
         ]
         let mask = types.reduce(CGEventMask(0)) { $0 | (CGEventMask(1) << CGEventMask($1.rawValue)) }
 
@@ -54,12 +54,21 @@ final class EventTap {
         switch type {
         case .leftMouseDown, .rightMouseDown, .otherMouseDown:
             let button = Int(event.getIntegerValueField(.mouseEventButtonNumber))
-            return buttons.mouseDown(button: button, flags: event.flags, location: event.location, isVirtual: false)
-                ? nil : event
+            if buttons.mouseDown(button: button, flags: event.flags, location: event.location, isVirtual: false) {
+                return nil
+            }
+            if type == .leftMouseDown { return MouseExtras.shared.leftMouseDown(event) ? nil : event }
+            if type == .rightMouseDown { MouseExtras.shared.rightMouseDown(event) }
+            return event
 
         case .leftMouseUp, .rightMouseUp, .otherMouseUp:
             let button = Int(event.getIntegerValueField(.mouseEventButtonNumber))
-            return buttons.mouseUp(button: button) ? nil : event
+            if buttons.mouseUp(button: button) { return nil }
+            if type == .leftMouseUp { return MouseExtras.shared.leftMouseUp(event) ? nil : event }
+            return event
+
+        case .leftMouseDragged:
+            return MouseExtras.shared.leftMouseDragged(event) ? nil : event
 
         case .rightMouseDragged, .otherMouseDragged, .mouseMoved:
             let dx = event.getDoubleValueField(.mouseEventDeltaX)
@@ -69,10 +78,18 @@ final class EventTap {
         case .scrollWheel:
             let dy = event.getIntegerValueField(.scrollWheelEventDeltaAxis1)
             if buttons.scrollWheel(deltaY: Int(dy)) { return nil }
+            if MouseExtras.shared.scroll(event) { return nil }
             return ScrollEngine.shared.handle(event)
 
         case .keyDown, .keyUp:
             return KeyEngine.shared.handle(type: type, event: event) ? nil : event
+
+        case .flagsChanged:
+            if event.getIntegerValueField(.keyboardEventKeycode) == Int64(KeyCode.capsLock) {
+                let on = event.flags.contains(.maskAlphaShift)
+                MainActor.assumeIsolated { HUD.shared.showCapsLock(on) }
+            }
+            return event
 
         default:
             return event

@@ -11,6 +11,10 @@ enum HIDPPFeature {
     static let smartShift: UInt16 = 0x2110
     static let smartShiftEnhanced: UInt16 = 0x2111
     static let adjustableDPI: UInt16 = 0x2201
+    static let hiResWheel: UInt16 = 0x2121
+    static let thumbWheel: UInt16 = 0x2150
+    static let reportRate: UInt16 = 0x8060
+    static let onboardProfiles: UInt16 = 0x8100
 }
 
 enum LogiControlNames {
@@ -66,7 +70,18 @@ final class HIDPPDevice: ObservableObject, Identifiable {
     @Published private(set) var controls: [ReprogControl] = []
     @Published private(set) var diverted: Set<UInt16> = []
 
-    private var features: [UInt16: UInt8] = [:]
+    // Managed in HIDPPDevice+Extras.swift.
+    @Published var hiResEnabled: Bool?
+    var hiResMultiplier = 8
+    @Published var thumbWheelMode: ThumbWheelMode?
+    var thumbWheelResolution = 120
+    var thumbWheelAccumulator = 0.0
+    var thumbWheelTouching = false
+    @Published var onboardProfilesEnabled: Bool?
+    @Published var reportRates: [Int] = []
+    @Published var reportRate: Int?
+
+    var features: [UInt16: UInt8] = [:]
     private var pressedControls: Set<UInt16> = []
     private var smartShiftTorque: UInt8 = 0
 
@@ -82,14 +97,14 @@ final class HIDPPDevice: ObservableObject, Identifiable {
         features[HIDPPFeature.smartShift] != nil || features[HIDPPFeature.smartShiftEnhanced] != nil
     }
 
-    private var savedSettings: LogiDeviceSettings {
+    var savedSettings: LogiDeviceSettings {
         get { SettingsStore.shared.settings.logi[name] ?? LogiDeviceSettings() }
         set { SettingsStore.shared.settings.logi[name] = newValue }
     }
 
     // MARK: Requests
 
-    private func call(_ feature: UInt16, _ function: UInt8, _ params: [UInt8] = []) async throws -> [UInt8] {
+    func call(_ feature: UInt16, _ function: UInt8, _ params: [UInt8] = []) async throws -> [UInt8] {
         guard let featureIndex = features[feature] else { throw HIDPPError.unsupported }
         return try await transport.request(deviceIndex: index, feature: featureIndex, function: function, params: params)
     }
@@ -106,7 +121,8 @@ final class HIDPPDevice: ObservableObject, Identifiable {
 
         let wanted = [HIDPPFeature.deviceName, HIDPPFeature.batteryStatus, HIDPPFeature.unifiedBattery,
                       HIDPPFeature.reprogControlsV4, HIDPPFeature.wirelessStatus, HIDPPFeature.smartShift,
-                      HIDPPFeature.smartShiftEnhanced, HIDPPFeature.adjustableDPI]
+                      HIDPPFeature.smartShiftEnhanced, HIDPPFeature.adjustableDPI, HIDPPFeature.hiResWheel,
+                      HIDPPFeature.thumbWheel, HIDPPFeature.reportRate, HIDPPFeature.onboardProfiles]
         for feature in wanted {
             let params = [UInt8(feature >> 8), UInt8(feature & 0xFF)]
             if let r = try? await transport.request(deviceIndex: index, feature: 0x00, function: 0x0, params: params),
@@ -120,6 +136,7 @@ final class HIDPPDevice: ObservableObject, Identifiable {
         await readDPI()
         await readSmartShift()
         await readControls()
+        await readExtras()
         await applySavedSettings()
         return true
     }
@@ -261,6 +278,7 @@ final class HIDPPDevice: ObservableObject, Identifiable {
             let params: [UInt8] = [UInt8(cid >> 8), UInt8(cid & 0xFF), 0x02, 0, 0]
             _ = try? await call(HIDPPFeature.reprogControlsV4, 3, params)
         }
+        await releaseExtras()
     }
 
     // MARK: Saved state
@@ -278,6 +296,7 @@ final class HIDPPDevice: ObservableObject, Identifiable {
         for cid in saved.divertedControls where available.contains(cid) {
             await setDiverted(cid, true)
         }
+        await applyExtras(saved)
     }
 
     // MARK: Notifications
@@ -303,6 +322,8 @@ final class HIDPPDevice: ObservableObject, Identifiable {
             }
             return
         }
+
+        if handleExtrasNotification(bytes, function: function) { return }
 
         if let wireless = features[HIDPPFeature.wirelessStatus], bytes[2] == wireless, function == 0 {
             Task { await self.applySavedSettings() }

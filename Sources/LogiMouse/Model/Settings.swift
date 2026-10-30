@@ -57,6 +57,10 @@ struct ButtonBinding: Codable, Hashable, Identifiable {
 enum ButtonNames {
     /// Buttons diverted from Logitech HID++ devices are reported as `virtualBase + CID`.
     static let virtualBase = 1000
+    /// Thumb wheel rotation and taps, when the thumb wheel is used as buttons.
+    static let thumbWheelLeft = 900
+    static let thumbWheelRight = 901
+    static let thumbWheelTap = 902
 
     static func name(_ button: Int) -> String {
         switch button {
@@ -65,6 +69,9 @@ enum ButtonNames {
         case 2: return L("Middle Button")
         case 3: return L("Back Button")
         case 4: return L("Forward Button")
+        case thumbWheelLeft: return "Logi " + L("Thumbwheel ←")
+        case thumbWheelRight: return "Logi " + L("Thumbwheel →")
+        case thumbWheelTap: return "Logi " + L("Thumbwheel Tap")
         case virtualBase...:
             return "Logi " + LogiControlNames.name(UInt16(button - virtualBase))
         default: return L("Button") + " \(button + 1)"
@@ -85,6 +92,12 @@ struct ButtonSettings: Codable, Hashable {
     var longPressInterval: Double = 120
     var dragThreshold: Double = 40
     var pan = PanSettings()
+    /// Activate an inactive window and deliver the same click to it.
+    var leftClickThrough = false
+    /// Activate an inactive window before its context menu opens.
+    var rightClickThrough = false
+    /// Left-button drags shorter than this (in px) are ignored, so clicks don't turn into tiny drags.
+    var leftDragDeadZone: Double = 0
 
     static var defaultBindings: [ButtonBinding] {
         [
@@ -138,9 +151,23 @@ struct ScrollSettings: Codable, Hashable {
     var fastEnabled = true
     var fastModifier: ModifierSet = [.option]
     var fastMultiplier: Double = 3.0
+
+    /// Bring the window under the pointer to the front when scrolling over it.
+    var scrollToRaise = false
+    /// Adjust sliders under the pointer with the wheel.
+    var verticalSliders = false
+    var horizontalSliders = false
 }
 
 // MARK: - Keyboard
+
+/// System-level substitution of one physical key for another, applied to every keyboard.
+struct KeySubstitution: Codable, Hashable, Identifiable {
+    var id = UUID()
+    var enabled = true
+    var from: UInt64
+    var to: UInt64
+}
 
 struct KeyMapping: Codable, Hashable, Identifiable {
     var id = UUID()
@@ -179,11 +206,32 @@ enum WheelMode: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+enum ThumbWheelMode: String, Codable, CaseIterable, Identifiable {
+    case native, horizontalScroll, verticalScroll, zoom, buttons
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .native: return L("Built-in behavior")
+        case .horizontalScroll: return L("Horizontal scroll")
+        case .verticalScroll: return L("Vertical scroll")
+        case .zoom: return L("Zoom")
+        case .buttons: return L("Use as buttons")
+        }
+    }
+}
+
 struct LogiDeviceSettings: Codable, Hashable {
     var dpi: Int?
     var wheelMode: WheelMode?
     var smartShiftThreshold: Int?
     var divertedControls: [UInt16] = []
+    var hiResWheel: Bool?
+    var thumbWheelMode: ThumbWheelMode?
+    var thumbWheelInvert = false
+    var thumbWheelSpeed: Double = 1.0
+    var onboardProfiles: Bool?
+    var reportRate: Int?
 }
 
 // MARK: - General
@@ -194,6 +242,8 @@ struct GeneralSettings: Codable, Hashable {
     /// "system", "en" or "zh-Hant".
     var language = "system"
     var tightenMenuBarIcons = false
+    var micMutePopup = true
+    var capsLockPopup = false
 }
 
 // MARK: - Root
@@ -205,6 +255,7 @@ struct AppSettings: Codable, Hashable {
     var cursor = CursorSettings()
     var scroll = ScrollSettings()
     var keyMappings: [KeyMapping] = []
+    var keySubstitutions: [KeySubstitution] = []
     var exceptions: [AppException] = []
     /// Keyed by device name.
     var logi: [String: LogiDeviceSettings] = [:]

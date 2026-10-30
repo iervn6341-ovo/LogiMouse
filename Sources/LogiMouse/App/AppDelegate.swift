@@ -31,6 +31,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { cursor in CursorController.shared.apply(cursor) }
             .store(in: &cancellables)
 
+        store.$settings
+            .map { $0.general.enabled ? $0.keySubstitutions : [] }
+            .removeDuplicates()
+            .debounce(for: .milliseconds(100), scheduler: RunLoop.main)
+            .sink { substitutions in KeySubstitutions.shared.apply(substitutions) }
+            .store(in: &cancellables)
+
         Permissions.shared.ensureAccessibility {
             EventTap.shared.start()
         }
@@ -48,7 +55,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         SettingsStore.shared.saveNow()
-        CursorController.shared.restore()
+        CursorController.shared.restoreIfApplied()
+        KeySubstitutions.shared.clear()
         Task {
             await HIDPPManager.shared.releaseAll()
             sender.reply(toApplicationShouldTerminate: true)

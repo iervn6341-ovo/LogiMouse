@@ -39,6 +39,32 @@ struct KeyboardTab: View {
                         Divider()
                     }
                 }
+
+                SettingsSection(title: L("Physical Key Substitution")) {
+                    HelpText(L("Swap physical keys at the system level, for every keyboard (for example Caps Lock → Escape). It works in every app and takes priority over key mapping."))
+                    ForEach($store.settings.keySubstitutions) { $substitution in
+                        HStack {
+                            Toggle("", isOn: $substitution.enabled).labelsHidden()
+                            keyPicker($substitution.from)
+                            Image(systemName: "arrow.right")
+                            keyPicker($substitution.to)
+                            Button {
+                                let id = substitution.id
+                                DispatchQueue.main.async {
+                                    store.settings.keySubstitutions.removeAll { $0.id == id }
+                                }
+                            } label: {
+                                Image(systemName: "trash")
+                            }
+                            .buttonStyle(.borderless)
+                            Spacer()
+                        }
+                    }
+                    Button(L("Add Substitution")) {
+                        store.settings.keySubstitutions.append(
+                            KeySubstitution(from: KeyUsage.keys[0].usage, to: KeyUsage.keys[9].usage))
+                    }
+                }
             }
             .padding(8)
         }
@@ -48,5 +74,15 @@ struct KeyboardTab: View {
             store.settings.keyMappings.append(mapping)
             newKey = nil
         }
+    }
+
+    private func keyPicker(_ usage: Binding<UInt64>) -> some View {
+        Picker("", selection: usage) {
+            ForEach(KeyUsage.keys, id: \.usage) { key in
+                Text(key.name).tag(key.usage)
+            }
+        }
+        .labelsHidden()
+        .frame(width: 200)
     }
 }

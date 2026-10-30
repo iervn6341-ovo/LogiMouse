@@ -18,6 +18,7 @@ final class HIDPPTransport {
 
     let device: IOHIDDevice
     let isReceiver: Bool
+    let productID: Int
     let productName: String
     var notificationHandler: (([UInt8]) -> Void)?
 
@@ -31,6 +32,7 @@ final class HIDPPTransport {
         let product = IOHIDDeviceGetProperty(device, kIOHIDProductKey as CFString) as? String ?? "Logitech"
         let productID = IOHIDDeviceGetProperty(device, kIOHIDProductIDKey as CFString) as? Int ?? 0
         productName = product
+        self.productID = productID
         isReceiver = Self.receiverProductIDs.contains(productID) || product.localizedCaseInsensitiveContains("receiver")
         inputBuffer = .allocate(capacity: Self.inputBufferSize)
         IOHIDDeviceRegisterInputReportCallback(device, inputBuffer, Self.inputBufferSize, hidppInputCallback,
@@ -42,6 +44,8 @@ final class HIDPPTransport {
         for (_, handler) in pending { handler(.failure(.timeout)) }
         pending.removeAll()
     }
+
+    static let unifyingProductIDs: Set<Int> = [0xC52B, 0xC532]
 
     private static let receiverProductIDs: Set<Int> = [
         0xC52B, 0xC532, // Unifying
@@ -84,6 +88,36 @@ final class HIDPPTransport {
         }
     }
 
+    /// Writes a HID++ 1.0 short register (used for receiver pairing).
+    func writeRegister(deviceIndex: UInt8, register: UInt8, params: [UInt8], timeout: TimeInterval = 2) async throws {
+        var report = [UInt8](repeating: 0, count: 7)
+        report[0] = Self.shortReportID
+        report[1] = deviceIndex
+        report[2] = 0x80
+        report[3] = register
+        for (i, p) in params.prefix(3).enumerated() {
+            report[4 + i] = p
+        }
+        let key = Self.key(deviceIndex, 0x80, register)
+
+        _ = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[UInt8], Error>) in
+            if let previous = pending.removeValue(forKey: key) { previous(.failure(.timeout)) }
+            pending[key] = { continuation.resume(with: $0) }
+            let result = report.withUnsafeBufferPointer { buffer in
+                IOHIDDeviceSetReport(device, kIOHIDReportTypeOutput, CFIndex(Self.shortReportID),
+                                     buffer.baseAddress!, buffer.count)
+            }
+            guard result == kIOReturnSuccess else {
+                pending.removeValue(forKey: key)?(.failure(.io(result)))
+                return
+            }
+            Task { [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                self?.pending.removeValue(forKey: key)?(.failure(.timeout))
+            }
+        }
+    }
+
     private static func key(_ index: UInt8, _ feature: UInt8, _ functionAndSW: UInt8) -> UInt32 {
         UInt32(index) << 16 | UInt32(feature) << 8 | UInt32(functionAndSW)
     }
@@ -102,6 +136,12 @@ final class HIDPPTransport {
             // HID++ 1.0 error: [0x10, index, 0x8F, subID, address, code]
             if reportID == Self.shortReportID && bytes[2] == 0x8F {
                 pending.removeValue(forKey: Self.key(index, bytes[3], bytes[4]))?(.failure(.protocolError(bytes[5])))
+                return
+            }
+            // HID++ 1.0 register write acknowledgement: [0x10, index, 0x80, register, …]
+            if reportID == Self.shortReportID,
+               let handler = pending.removeValue(forKey: Self.key(index, bytes[2], bytes[3])) {
+                handler(.success(Array(bytes[4...])))
                 return
             }
             if reportID == Self.longReportID && bytes[3] & 0x0F != 0,

@@ -31,6 +31,14 @@ struct ScrollTab: View {
                     HelpText(L("Only affects mouse wheels, so you can keep natural scrolling for the trackpad and a classic direction for the mouse."))
                 }
 
+                SettingsSection(title: L("Window & Slider Scrolling")) {
+                    Toggle(L("Scroll to raise"), isOn: $store.settings.scroll.scrollToRaise)
+                    HelpText(L("Scrolling over a window in the background brings it to the front."))
+                    Toggle(L("Vertical wheel adjusts sliders"), isOn: $store.settings.scroll.verticalSliders)
+                    Toggle(L("Horizontal wheel adjusts sliders"), isOn: $store.settings.scroll.horizontalSliders)
+                    HelpText(L("Scroll over a slider to change its value. Works with sliders that VoiceOver can recognize."))
+                }
+
                 SettingsSection(title: L("Modifier Keys")) {
                     modifierRow(title: L("Horizontal scroll"), enabled: $store.settings.scroll.horizontalEnabled,
                                 modifiers: $store.settings.scroll.horizontalModifier) {

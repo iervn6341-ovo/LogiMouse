@@ -213,8 +213,11 @@ final class ActionExecutor {
         size = UInt32(MemoryLayout<UInt32>.size)
         if AudioObjectGetPropertyData(deviceID, &muteAddress, 0, nil, &size, &muted) == noErr {
             muted = muted == 0 ? 1 : 0
-            AudioObjectSetPropertyData(deviceID, &muteAddress, 0, nil, size, &muted)
-            return
+            if AudioObjectSetPropertyData(deviceID, &muteAddress, 0, nil, size, &muted) == noErr {
+                let isMuted = muted != 0
+                MainActor.assumeIsolated { HUD.shared.showMicMute(isMuted) }
+                return
+            }
         }
 
         // Devices without a mute control: toggle the input volume between 0 and its previous level.
@@ -230,7 +233,10 @@ final class ActionExecutor {
         } else {
             volume = savedInputVolume
         }
-        AudioObjectSetPropertyData(deviceID, &volumeAddress, 0, nil, size, &volume)
+        if AudioObjectSetPropertyData(deviceID, &volumeAddress, 0, nil, size, &volume) == noErr {
+            let isMuted = volume == 0
+            MainActor.assumeIsolated { HUD.shared.showMicMute(isMuted) }
+        }
     }
 
     private var savedInputVolume: Float32 = 0.75

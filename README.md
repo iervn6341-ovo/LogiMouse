@@ -12,12 +12,12 @@ LogiMouse 是一個免費、開放原始碼的 macOS 選單列工具，讓第三
 
 | 分頁 | 功能 |
 | --- | --- |
-| **按鍵 Buttons** | 綁定任何非左鍵的滑鼠按鍵（可搭配 fn ⌃ ⌥ ⇧ ⌘ 組合）：點擊、長按（可連發）、上下左右拖曳手勢（可連發）、按住 + 滾輪、按住 + 點擊另一鍵（和弦）。可設定全域或個別 App 專屬綁定。拖曳捲動（Pan）支援慣性、反向與速度。 |
-| **滑鼠 Mouse** | 游標速度、加速度或完全關閉加速度；手勢時固定游標。羅技裝置：電量、DPI、SmartShift／段落／無段滾輪模式與靈敏度，並可把手勢鍵等按鍵「轉交」給 LogiMouse 綁定。 |
-| **捲動 Scroll** | 平滑捲動（每格距離、持續時間、加速度、更加平滑）、垂直／水平滾輪各自反向（不影響觸控式軌跡板）、水平速度、修飾鍵 + 滾輪 = 水平捲動／縮放／快速捲動。 |
-| **鍵盤 Keyboard** | 將按鍵或組合鍵對應到另一個快速鍵或任何動作。 |
+| **按鍵 Buttons** | 綁定任何非左鍵的滑鼠按鍵（可搭配 fn ⌃ ⌥ ⇧ ⌘ 組合）：點擊、長按（可連發）、上下左右拖曳手勢（可連發）、按住 + 滾輪、按住 + 點擊另一鍵（和弦）。可設定全域或個別 App 專屬綁定。拖曳捲動（Pan）支援慣性、反向、速度，按住縮放修飾鍵拖曳可縮放。左／右鍵點擊穿透、左鍵拖曳死區。 |
+| **滑鼠 Mouse** | 游標速度、加速度或完全關閉加速度；手勢時固定游標。羅技裝置：電量、DPI、SmartShift／段落／無段滾輪模式與靈敏度、高解析度滾輪、拇指滾輪（水平／垂直捲動、縮放、當作按鍵）、板載設定檔、回報率，並可把手勢鍵等按鍵「轉交」給 LogiMouse 綁定。Unifying 接收器配對／取消配對。 |
+| **捲動 Scroll** | 平滑捲動（每格距離、持續時間、加速度、更加平滑）、垂直／水平滾輪各自反向（不影響觸控式軌跡板）、水平速度、修飾鍵 + 滾輪 = 水平捲動／縮放／快速捲動、捲動喚起背景視窗、滾輪調整滑桿。 |
+| **鍵盤 Keyboard** | 將按鍵或組合鍵對應到另一個快速鍵或任何動作；系統層級的實體按鍵替換（例如 Caps Lock → Esc）。 |
 | **例外 Exceptions** | 針對個別 App 停用全部功能、平滑捲動、全域綁定或按鍵對應，或設定專屬按鍵綁定。 |
-| **設定 Settings** | 登入時啟動、隱藏選單列圖像、縮小選單列圖像間距、語言（English／繁體中文）、匯出／匯入／清除設定。 |
+| **設定 Settings** | 登入時啟動、隱藏選單列圖像、縮小選單列圖像間距、麥克風靜音與 Caps Lock 提示、語言（English／繁體中文）、匯出／匯入／清除設定。 |
 
 Available actions include clicks (single, double, triple, modifier-clicks, back/forward), Mission Control, App Exposé, Show Desktop, Launchpad, switching Spaces, back/forward, Look Up, zoom, scrolling, volume, media keys, brightness, keyboard backlight, microphone mute, app switching, input source switching, window fullscreen/zoom/minimize/close, hiding or quitting the app, lock screen, sleep, display off, log out, screenshot, custom keyboard shortcuts, opening URLs and files, launching apps and running Shortcuts.
 
@@ -62,14 +62,15 @@ Each ad-hoc-signed build has a new signature. If the mouse stops responding afte
 - **Buttons** (`Core/ButtonEngine.swift`): when a pressed button has bindings, its press is held back. The engine then decides between click, long press, drag gesture, chord, button + scroll and pan. If nothing matches, the original click is replayed.
 - **Scrolling** (`Core/ScrollEngine.swift`): physical wheel ticks are turned into pixel-based continuous scroll events, animated at 120 Hz with exponential easing and speed-based acceleration. Trackpad and Magic Mouse events (already continuous) pass through untouched.
 - **Cursor** (`Core/CursorController.swift`): sets `HIDPointerResolution` and the mouse acceleration property on mouse services through `IOHIDEventSystemClient`.
-- **Logitech HID++ 2.0** (`HIDPP/`): talks to receivers (Unifying, Bolt, Lightspeed) and to Bluetooth and USB devices over the vendor HID collection. It uses the features `0x0005` (name), `0x1000`/`0x1004` (battery), `0x1B04` (button diversion), `0x1D4B` (reconnect), `0x2110`/`0x2111` (SmartShift) and `0x2201` (DPI). Settings are reapplied whenever a device reconnects, and diverted buttons are handed back to the firmware when LogiMouse quits.
+- **Logitech HID++ 2.0** (`HIDPP/`): talks to receivers (Unifying, Bolt, Lightspeed) and to Bluetooth and USB devices over the vendor HID collection. It uses the features `0x0005` (name), `0x1000`/`0x1004` (battery), `0x1B04` (button diversion), `0x1D4B` (reconnect), `0x2110`/`0x2111` (SmartShift), `0x2121` (high-resolution wheel), `0x2150` (thumb wheel), `0x2201` (DPI), `0x8060` (report rate) and `0x8100` (onboard profiles), plus receiver register `0xB2` for Unifying pairing. Settings are reapplied whenever a device reconnects, and diverted buttons and wheels are handed back to the firmware when LogiMouse quits.
+- **Key substitution** (`Core/KeySubstitutions.swift`): sets `UserKeyMapping` on keyboard services, the same mechanism `hidutil` uses.
 
 ## 限制 Known limitations
 
 - Back/forward and Space switching are sent as keyboard shortcuts (⌘[ / ⌘], ⌃← / ⌃→). Apps or setups that changed those shortcuts will not respond.
 - Zooming sends ⌘+ / ⌘−. It is not a real pinch gesture.
-- The thumb wheel (HID++ `0x2150`), haptics, onboard profiles and report rate are not implemented yet.
-- Logitech keyboards' non-standard keys and click-through for inactive windows are not implemented yet.
+- Not implemented yet: haptic feedback (MX Master 4), Bolt receiver pairing, the 80% battery charge limit (it needs a privileged helper), and showing a Logitech keyboard's backlight level. A Logitech keyboard's non-standard keys can be diverted from the Mouse tab and then bound on the Buttons tab.
+- Nothing has been tested on real Logitech hardware yet. The HID++ byte layouts follow public documentation and Solaar.
 
 ## License
 

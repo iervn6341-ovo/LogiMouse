@@ -18,7 +18,10 @@ final class ScrollEngine {
     private var postFlags: CGEventFlags = []
     private var lastTickTime = 0.0
     private var lastTickSign = 0
-    private var streak = 0
+    private var streak = 0.0
+    private var zoomAccumulator = 0.0
+    private var lineRemainderX = 0.0
+    private var lineRemainderY = 0.0
 
     private var panSamples: [(time: Double, dx: Double, dy: Double)] = []
 
@@ -42,16 +45,76 @@ final class ScrollEngine {
         var x = Axis(event: event, axis: 2)
         guard !y.isZero || !x.isZero else { return event }
 
-        let mods = ModifierSet(cgFlags: event.flags)
-        var flags = event.flags
-
         if s.invertVertical { y.scale(-1) }
         if s.invertHorizontal { x.scale(-1) }
         x.scale(s.horizontalSpeed)
 
-        if s.zoomEnabled, !s.zoomModifier.isEmpty, mods.isSuperset(of: s.zoomModifier), !y.isZero {
-            let zoomIn = (y.direction > 0) != s.zoomInvert
-            ActionExecutor.shared.zoom(in: zoomIn)
+        guard let modified = applyModifiers(y: Double(y.direction), flags: event.flags) else { return nil }
+        var flags = modified.flags
+        if modified.horizontal {
+            x = y
+            if s.horizontalInvert { x.scale(-1) }
+            y = Axis()
+        }
+
+        guard context.smoothScroll else {
+            y.scale(modified.multiplier * s.lineMultiplier)
+            x.scale(modified.multiplier * s.lineMultiplier)
+            y.write(to: event, axis: 1)
+            x.write(to: event, axis: 2)
+            event.flags = flags
+            return event
+        }
+
+        flags.remove(.maskAlphaShift)
+        addSmooth(ticksY: Double(y.direction), ticksX: Double(x.direction),
+                  multiplier: modified.multiplier, flags: flags)
+        return nil
+    }
+
+    /// Wheel input that arrives through HID++ (a diverted high-resolution wheel or thumb wheel),
+    /// in wheel ticks that may be fractional. Positive Y scrolls up, positive X scrolls left.
+    func externalWheel(ticksY: Double, ticksX: Double, applyInversion: Bool = true) {
+        let s = settings
+        let context = SettingsStore.shared.currentContext
+        var y = ticksY
+        var x = ticksX
+        // A diverted wheel never reaches macOS on its own, so it must keep scrolling even when paused.
+        guard !context.disabled else {
+            postLines(x: x, y: y, flags: [])
+            return
+        }
+        if applyInversion {
+            if s.invertVertical { y = -y }
+            if s.invertHorizontal { x = -x }
+            x *= s.horizontalSpeed
+        }
+        guard let modified = applyModifiers(y: y, flags: EventPoster.currentFlags) else { return }
+        if modified.horizontal {
+            x = s.horizontalInvert ? -y : y
+            y = 0
+        }
+        if context.smoothScroll {
+            addSmooth(ticksY: y, ticksX: x, multiplier: modified.multiplier, flags: modified.flags)
+        } else {
+            let m = modified.multiplier * s.lineMultiplier * 3
+            postLines(x: x * m, y: y * m, flags: modified.flags)
+        }
+    }
+
+    /// Zoom, fast and horizontal modifiers. Returns nil when the input was turned into zooming.
+    private func applyModifiers(y: Double, flags: CGEventFlags)
+        -> (multiplier: Double, horizontal: Bool, flags: CGEventFlags)? {
+        let s = settings
+        let mods = ModifierSet(cgFlags: flags)
+        var flags = flags
+
+        if s.zoomEnabled, !s.zoomModifier.isEmpty, mods.isSuperset(of: s.zoomModifier), y != 0 {
+            var amount = y
+            if s.fastEnabled, !s.fastModifier.isEmpty, mods.isSuperset(of: s.fastModifier) {
+                amount *= s.fastMultiplier
+            }
+            zoom(by: s.zoomInvert ? -amount : amount)
             return nil
         }
 
@@ -60,40 +123,55 @@ final class ScrollEngine {
             multiplier = s.fastMultiplier
             flags.remove(s.fastModifier.cgFlags)
         }
-
-        if s.horizontalEnabled, !s.horizontalModifier.isEmpty, mods.isSuperset(of: s.horizontalModifier), !y.isZero {
-            x = y
-            if s.horizontalInvert { x.scale(-1) }
-            y = Axis()
+        var horizontal = false
+        if s.horizontalEnabled, !s.horizontalModifier.isEmpty, mods.isSuperset(of: s.horizontalModifier), y != 0 {
+            horizontal = true
             flags.remove(s.horizontalModifier.cgFlags)
         }
+        return (multiplier, horizontal, flags)
+    }
 
-        guard context.smoothScroll else {
-            y.scale(multiplier * s.lineMultiplier)
-            x.scale(multiplier * s.lineMultiplier)
-            y.write(to: event, axis: 1)
-            x.write(to: event, axis: 2)
-            event.flags = flags
-            return event
+    /// Zooms one step per accumulated tick (positive zooms in).
+    func zoom(by ticks: Double) {
+        if zoomAccumulator != 0 && (zoomAccumulator > 0) != (ticks > 0) { zoomAccumulator = 0 }
+        zoomAccumulator += ticks
+        while abs(zoomAccumulator) >= 1 {
+            let zoomIn = zoomAccumulator > 0
+            ActionExecutor.shared.zoom(in: zoomIn)
+            zoomAccumulator += zoomIn ? -1 : 1
         }
+    }
 
+    private func addSmooth(ticksY: Double, ticksX: Double, multiplier: Double, flags: CGEventFlags) {
+        let s = settings
         postFlags = flags
         let now = CACurrentMediaTime()
         let step = s.step * multiplier
-        if y.direction != 0 {
-            let factor = accelerationFactor(sign: y.direction, now: now)
-            if pendingY != 0 && (pendingY > 0) != (y.direction > 0) { pendingY = 0; velocityY = 0 }
-            pendingY += Double(y.direction) * step * factor
+        if ticksY != 0 {
+            let factor = accelerationFactor(sign: ticksY > 0 ? 1 : -1, weight: abs(ticksY), now: now)
+            if pendingY != 0 && (pendingY > 0) != (ticksY > 0) { pendingY = 0; velocityY = 0 }
+            pendingY += ticksY * step * factor
         }
-        if x.direction != 0 {
-            let factor = y.direction == 0 ? accelerationFactor(sign: x.direction * 2, now: now) : 1
-            if pendingX != 0 && (pendingX > 0) != (x.direction > 0) { pendingX = 0; velocityX = 0 }
-            pendingX += Double(x.direction) * step * factor
+        if ticksX != 0 {
+            let factor = ticksY == 0 ? accelerationFactor(sign: ticksX > 0 ? 2 : -2, weight: abs(ticksX), now: now) : 1
+            if pendingX != 0 && (pendingX > 0) != (ticksX > 0) { pendingX = 0; velocityX = 0 }
+            pendingX += ticksX * step * factor
         }
         momentumX = 0
         momentumY = 0
         startTimer()
-        return nil
+    }
+
+    /// Posts line-based scroll events, carrying fractional lines over to the next call.
+    private func postLines(x: Double, y: Double, flags: CGEventFlags) {
+        lineRemainderX += x
+        lineRemainderY += y
+        let ix = lineRemainderX.rounded(.towardZero)
+        let iy = lineRemainderY.rounded(.towardZero)
+        lineRemainderX -= ix
+        lineRemainderY -= iy
+        guard ix != 0 || iy != 0 else { return }
+        EventPoster.scrollLines(x: Int32(clamping: Int(ix)), y: Int32(clamping: Int(iy)), flags: flags)
     }
 
     /// Scrolls by a number of wheel ticks; used by the scroll actions.
@@ -109,16 +187,17 @@ final class ScrollEngine {
         startTimer()
     }
 
-    private func accelerationFactor(sign: Int, now: Double) -> Double {
+    /// `weight` lets fractional (high-resolution) ticks build up the streak proportionally.
+    private func accelerationFactor(sign: Int, weight: Double, now: Double) -> Double {
         if sign == lastTickSign && now - lastTickTime < 0.12 {
-            streak += 1
+            streak += min(1, weight)
         } else {
             streak = 0
         }
         lastTickSign = sign
         lastTickTime = now
         let a = max(0, min(10, settings.acceleration))
-        return 1 + a * 0.04 * pow(Double(min(streak, 40)), 1.25)
+        return 1 + a * 0.04 * pow(min(streak, 40), 1.25)
     }
 
     // MARK: Pan
@@ -135,7 +214,16 @@ final class ScrollEngine {
         let s = settings
         var speed = pan.speed * (pan.invert ? -1 : 1)
         var flags = EventPoster.currentFlags
-        if s.fastEnabled, !s.fastModifier.isEmpty, ModifierSet(cgFlags: flags).isSuperset(of: s.fastModifier) {
+        let mods = ModifierSet(cgFlags: flags)
+        if s.zoomEnabled, !s.zoomModifier.isEmpty, mods.isSuperset(of: s.zoomModifier) {
+            // Modifier + vertical pan zooms, one step per 30 px.
+            var amount = -dy / 30
+            if s.fastEnabled, !s.fastModifier.isEmpty, mods.isSuperset(of: s.fastModifier) { amount *= s.fastMultiplier }
+            zoom(by: s.zoomInvert ? -amount : amount)
+            panSamples.removeAll()
+            return
+        }
+        if s.fastEnabled, !s.fastModifier.isEmpty, mods.isSuperset(of: s.fastModifier) {
             speed *= s.fastMultiplier
             flags.remove(s.fastModifier.cgFlags)
         }

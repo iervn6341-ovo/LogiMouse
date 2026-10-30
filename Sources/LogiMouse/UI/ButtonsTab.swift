@@ -67,6 +67,16 @@ struct ButtonsTab: View {
                               range: 0.25...4, format: "%.2f×")
                 }
 
+                SettingsSection(title: L("Click Through")) {
+                    Toggle(L("Left click-through"), isOn: $store.settings.buttons.leftClickThrough)
+                    HelpText(L("Clicking a control in an inactive window activates the window and clicks the control at once, instead of needing a second click."))
+                    Toggle(L("Right click-through"), isOn: $store.settings.buttons.rightClickThrough)
+                    HelpText(L("Right-clicking an inactive window activates it before the context menu opens."))
+                    SliderRow(title: L("Left drag dead zone (px)"), value: $store.settings.buttons.leftDragDeadZone,
+                              range: 0...20, step: 1)
+                    HelpText(L("Ignores tiny movements while the left button is down, so slightly shaky clicks don't become drags. 0 turns it off."))
+                }
+
                 SettingsSection(title: L("Timing")) {
                     SliderRow(title: L("Long press delay (ms)"), value: $store.settings.buttons.longPressDelay,
                               range: 150...1500, step: 10)
